@@ -1,0 +1,11 @@
+[Unit]
+Description=Job that runs your user script
+
+[Service]
+ExecStart=/usr/local/bin/update_dns.sh
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+
