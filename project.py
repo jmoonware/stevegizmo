@@ -1,15 +1,17 @@
 import dash
 import dash_bootstrap_components as dbc
-from dash import html,Input,Output,ctx, dcc
+from dash import html, Input, Output, State, ctx, dcc
 from datetime import datetime as dt
 import pytz
 import portalocker
 import flask
-from flask import request,Response
+from flask import request, Response
+from dash.exceptions import PreventUpdate
 import urllib.parse
 import logging
 from logging import handlers # why?
 import settings
+import os
 
 # utility functions
 def StartDataLogging():
@@ -56,8 +58,6 @@ def get_messages():
 # Start of exec
 #######
 
-message_format = "{0}\t{1}\t{2}\n" # iso UTC datetime,from,message(tab-stripped)
-
 StartDataLogging()
 
 # start last-chance exception block
@@ -70,22 +70,36 @@ try:
 
 	# Callbacks
 	@app.callback(
-		Output("last-sent","children"),
+#		Output("last-sent","children"),
 		Input("send-button","n_clicks"),
-		Input("message-input","value"),
-		Input("update-interval","n_intervals")
+		State("message-input","value"),
 	)
-	def on_click(n,message,n_i):
+	def on_click(n,message):
 		if "send-button" == ctx.triggered_id:
 			logging.getLogger(__name__).info("send: " + message)
 			logging.getLogger(__name__).debug("send: " + send_message_url(message))
 			persist_message("website",message)
-			return(message)
-		elif "update-interval" == ctx.triggered_id:
-			return('\n'.join(get_messages()))
-		else:
-			return('...')
+		return
 
+	# polling loop to update local message cache
+	@app.callback(
+		Output("cache-time","children"),
+		Output("cache-messages","children"),
+		Output("last-sent","children"),
+		Input("update-interval","n_intervals"),
+		State("cache-time","children"),
+		State("cache-messages","children"),
+	)
+	def on_interval(n_i,cache_time_string,cache_messages_string):
+		cache_time = dt.fromisoformat(cache_time_string).timestamp()
+		cache_messages = cache_messages_string
+		new_time = os.path.getmtime(settings.message_filename)
+		if new_time > cache_time: # new messages have been written
+			cache_time = new_time
+			cache_messages = '\n'.join(get_messages())
+		else: # nothing to do
+			raise PreventUpdate
+		return dt.fromtimestamp(cache_time).isoformat(), cache_messages, cache_messages
 	
 	# Layout
 	lo=[html.H1('Sands Com Station',style={'textAlign': 'center'})]
@@ -106,7 +120,6 @@ try:
 			html.Div(' ',style={'margin-bottom': 25}),
 	        dbc.Card([
 				dbc.CardBody([
-					html.H3("Send Message",className="text-primary"),
 					dbc.Table(html.Tbody([
 						html.Tr([
 							html.Td(dbc.Input(id="message-input",placeholder="Type a message...",size="md",type="text")),
@@ -127,7 +140,15 @@ try:
 			)
 		)
 	)
-	
+	# local storage divs
+	lo.append(
+		dbc.Row(
+			[
+				html.Div(id="cache-time",style={'display': 'none'},children=dt.fromtimestamp(os.path.getmtime(settings.message_filename)-1).isoformat()),
+				html.Div(id="cache-messages",style={'display': 'none'},children=''),
+			]
+		)
+	)	
 	app.layout=html.Div(children=lo)
 
 	# Endpoints
