@@ -1,7 +1,9 @@
 import dash
 import dash_bootstrap_components as dbc
-from dash import html,Input,Output,ctx
+from dash import html,Input,Output,ctx, dcc
 from datetime import datetime as dt
+import pytz
+import portalocker
 import flask
 from flask import request,Response
 import urllib.parse
@@ -30,9 +32,31 @@ def send_message_url(message):
 	send_url.extend(["data=",urllib.parse.quote(hex_string)])
 	return("".join(send_url))
 
+def persist_message(message_from, message):
+	if message != None:
+		try:
+			# ISO, timezone-aware UTC time
+			isonow = dt.utcnow().astimezone(pytz.UTC).isoformat()
+			with portalocker.Lock(settings.message_filename,'a',timeout=5) as mf:
+				mf.write("{0}\t{1}\t{2}\n".format(isonow,message_from,message.replace('\t',' ')))
+		except Exception as ex:
+			logging.getLogger(__name__).error("persist: "+str(ex))
+	return
+
+def get_messages():
+	lines=[]
+	try:
+		with portalocker.Lock(settings.message_filename,'r',timeout=5) as mf:
+			lines=mf.readlines()
+	except Exception as ex:
+		logging.getLogger(__name__).error("get_messages: "+str(ex))
+	return(lines)
+
 ########
 # Start of exec
 #######
+
+message_format = "{0}\t{1}\t{2}\n" # iso UTC datetime,from,message(tab-stripped)
 
 StartDataLogging()
 
@@ -43,6 +67,25 @@ try:
 		external_stylesheets=[dbc.themes.CYBORG],
 		meta_tags=[{'name':'viewport','content':'width=device-width, initial-scale=1'}]
 			)
+
+	# Callbacks
+	@app.callback(
+		Output("last-sent","children"),
+		Input("send-button","n_clicks"),
+		Input("message-input","value"),
+		Input("update-interval","n_intervals")
+	)
+	def on_click(n,message,n_i):
+		if "send-button" == ctx.triggered_id:
+			logging.getLogger(__name__).info("send: " + message)
+			logging.getLogger(__name__).debug("send: " + send_message_url(message))
+			persist_message("website",message)
+			return(message)
+		elif "update-interval" == ctx.triggered_id:
+			return('\n'.join(get_messages()))
+		else:
+			return('...')
+
 	
 	# Layout
 	lo=[html.H1('Sands Com Station',style={'textAlign': 'center'})]
@@ -56,7 +99,7 @@ try:
 						html.Tr([
 							html.Td(html.H4("...",id="last-sent")),
 							]),
-						]),
+						],id="message-rows"),
 					),
 				]),
 			]),
@@ -77,21 +120,15 @@ try:
 			]),
 		])
 	)
+	lo.append(
+		dbc.Row(
+			dbc.Col(
+				dcc.Interval(interval="2000",id="update-interval",n_intervals=0)
+			)
+		)
+	)
 	
 	app.layout=html.Div(children=lo)
-	
-	# Callbacks
-	@app.callback(
-		Output("last-sent","children"),
-		Input("send-button","n_clicks"),
-		Input("message-input","value")
-	)
-	def on_click(n,message):
-		if "send-button" == ctx.triggered_id:
-			logging.getLogger(__name__).info("send: " + message)
-			logging.getLogger(__name__).debug("send: " + send_message_url(message))
-			return(message)
-
 
 	# Endpoints
 	@server.route('/receive', methods=['GET','POST'])

@@ -1,7 +1,7 @@
-## stevegizmo
+# stevegizmo
 Code to set up simple server that sends messages via the Rockblock GPS chip gizmo
 
-# Provisioning the AWS server
+## Provisioning the AWS server
 
 * The server itself
 
@@ -34,3 +34,11 @@ Install the dash, dash-bootstrap-components, and mod\_wsgi python libs
 * Dynamic DNS support
 
 Each time the AWS server reboots it gets a new IP address (unless you are payingfor a static IP address...) So we need to set up a DNS record update on reboot. The simplest way appears to be a one-shot service using systemd.
+
+See the update_dns.sh file and updatedns.service files in this repo. Copy the updatedns.service file to /etc/systemd/services and the update_dns.sh script to /usr/local/bin (after you edit the contents for accuracy.)
+
+* Sending messages
+
+The Rockblock device can call the url endpoint http://rockblock.timeswine.org:5000/receive. That updates the message store (a flat file.) 
+
+How to notify someone that a message has been sent? I looked at a number of wasy to do this (including trying to set up Amazon SNS for SMS messages and running an SMTP server on this instance) but the easiest by far is creating a Google gmail account and using the python smtplib. To send texts, most carriers have an email gateway like <number>@txt.att.net (for e.g. AT&T)

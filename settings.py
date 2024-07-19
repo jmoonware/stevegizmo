@@ -1,4 +1,5 @@
 log_filename="/www/gizmo_log.txt"
+message_filename="/www/messages.txt"
 rb_send_url="https://core.rock7.com/rockblock/MT"
 rb_imei="12345"
 rb_username="mrsmith"
