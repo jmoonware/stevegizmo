@@ -54,6 +54,20 @@ def get_messages():
 		logging.getLogger(__name__).error("get_messages: "+str(ex))
 	return(lines)
 
+def backup_messages():
+	if os.path.isfile(settings.message_filename):
+		backnum = 0
+		while os.path.isfile(settings.message_filename+"."+str(backnum)):
+			backnum+=1
+		mc = "mv {0} {1}".format(settings.message_filename,settings.message_filename+"."+str(backnum))
+		try:
+			logging.getLogger(__name__).info('backup_messages: ' + mc)
+			ret = os.system(mc)
+			logging.getLogger(__name__).info('backup_messages: returned ' + str(ret))
+		except Exception as ex:
+			logging.getLogger(__name__).error('backup_messages: ' + str(ex))
+	return
+
 ########
 # Start of exec
 #######
@@ -67,6 +81,7 @@ try:
 		external_stylesheets=[dbc.themes.CYBORG],
 		meta_tags=[{'name':'viewport','content':'width=device-width, initial-scale=1'}]
 			)
+	app.title = 'SandsComStat'
 
 	# Callbacks
 	@app.callback(
@@ -85,7 +100,7 @@ try:
 	@app.callback(
 		Output("cache-time","children"),
 		Output("cache-messages","children"),
-		Output("last-sent","children"),
+		Output("message-rows","children"),
 		Input("update-interval","n_intervals"),
 		State("cache-time","children"),
 		State("cache-messages","children"),
@@ -93,14 +108,36 @@ try:
 	def on_interval(n_i,cache_time_string,cache_messages_string):
 		cache_time = dt.fromisoformat(cache_time_string).timestamp()
 		cache_messages = cache_messages_string
-		new_time = os.path.getmtime(settings.message_filename)
-		if new_time > cache_time: # new messages have been written
+		out_rows = []
+		new_time = 0
+		if os.path.isfile(settings.message_filename):
+			new_time = os.path.getmtime(settings.message_filename)
+		if new_time != cache_time: # new messages have been written
 			cache_time = new_time
-			cache_messages = '\n'.join(get_messages())
+			msg_lines = get_messages()
+			try:
+				msg_elements = [x.split('\t') for x in msg_lines]
+				msg_fmt_dt = [(x[0].split('T')[0],x[0].split('T')[-1].split('.')[0]) for x in msg_elements]
+				cache_messages = '\n'.join(msg_lines)
+				out_rows = [html.Tr([html.Td(x[0]),html.Td(x[1]),html.Td(y[1]),html.Td(y[2])]) for x,y in zip(msg_fmt_dt,msg_elements)] 
+			except IndexError as ie:
+				logging.getLogger(__name__).error("on_interval: {1}".format(str(ie)))
+				backup_messages() # corrupt message somewhere...
 		else: # nothing to do
 			raise PreventUpdate
-		return dt.fromtimestamp(cache_time).isoformat(), cache_messages, cache_messages
-	
+		return dt.fromtimestamp(cache_time).isoformat(), cache_messages, out_rows
+
+	@app.callback(
+		Output("collapse", "is_open"),
+		Input("collapse-button", "n_clicks"),
+		State("collapse", "is_open"),
+	)
+	def toggle_collapse(n, is_open):
+		if n:
+			return not is_open
+		return is_open
+
+
 	# Layout
 	lo=[html.H1('Sands Com Station',style={'textAlign': 'center'})]
 	lo.append(html.Div(' ',style={'margin-bottom': 25}))
@@ -109,12 +146,14 @@ try:
 	        dbc.Card([
 				dbc.CardBody([
 					html.H3("Messages",className="text-primary"),
-					dbc.Table(html.Tbody([
-						html.Tr([
-							html.Td(html.H4("...",id="last-sent")),
-							]),
+					dbc.Table([
+						html.Thead(html.Tr([html.Th("UTC Date",style={'width':'10%'}), html.Th("UTC Time",style={'width':'10%'}),html.Th("From",style={'width':'10%'}),html.Th("Message"), ])),
+						html.Tbody([
+#						html.Tr([
+#							html.Td(html.H4("...",id="last-sent")),
+#							]),
 						],id="message-rows"),
-					),
+					]),
 				]),
 			]),
 			html.Div(' ',style={'margin-bottom': 25}),
@@ -133,6 +172,80 @@ try:
 			]),
 		])
 	)
+	# advanced drop-down, usually initially hidden
+	# a little white space
+	lo.append(
+		dbc.Row(
+			dbc.Col(
+				html.Div(' ',style={'margin-bottom': 25})
+			)
+		)
+	)
+
+	# the button to open the collapsed area
+	lo.append(
+		dbc.Row([
+			dbc.Col(
+				dbc.Button(
+					"Advanced",
+					id="collapse-button",
+					n_clicks=0,
+					color='secondary',
+				),
+				width = 'auto'
+			),
+		],
+		justify='center')
+	)
+	# a little white space
+	lo.append(
+		dbc.Row(
+			dbc.Col(
+				html.Div(' ',style={'margin-bottom': 25})
+			)
+		)
+	)
+
+	# the collapsed area
+	lo.append(
+		dbc.Row([
+			dbc.Collapse([
+				dbc.Card(
+					dbc.CardBody([
+						dbc.Table(
+							html.Tbody([
+								html.Tr([
+									html.Td(
+										dbc.Button(
+											"Logs",
+											id="load-logs-button",
+											n_clicks=0,
+											color='secondary',
+										),
+									)]
+								),
+								html.Tr([
+									html.Td(
+										dcc.Textarea(
+											id='textarea-logs',
+											value='Log data goes here...',
+											style={'width':'100%'},
+										),
+									)]
+								),
+							])
+						)
+					]), # cardbody
+				), # Card
+			],
+			id="collapse",
+			is_open=False,
+			)
+		]) # Row
+	) # append
+
+
+
 	lo.append(
 		dbc.Row(
 			dbc.Col(
@@ -144,7 +257,7 @@ try:
 	lo.append(
 		dbc.Row(
 			[
-				html.Div(id="cache-time",style={'display': 'none'},children=dt.fromtimestamp(os.path.getmtime(settings.message_filename)-1).isoformat()),
+				html.Div(id="cache-time",style={'display': 'none'},children=dt.fromtimestamp(0).isoformat()),
 				html.Div(id="cache-messages",style={'display': 'none'},children=''),
 			]
 		)
