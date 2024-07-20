@@ -137,6 +137,17 @@ try:
 			return not is_open
 		return is_open
 
+	@app.callback(
+		Output("textarea-logs", "value"),
+		Input("load-logs-button", "n_clicks"),
+	)
+	def get_logs(n):
+		lines=[]
+		if n:
+			with open(settings.log_filename,'r') as f:
+				lines = f.readlines()
+		return ''.join(lines) 
+
 
 	# Layout
 	lo=[html.H1('Sands Com Station',style={'textAlign': 'center'})]
@@ -229,7 +240,7 @@ try:
 										dcc.Textarea(
 											id='textarea-logs',
 											value='Log data goes here...',
-											style={'width':'100%'},
+											style={'width':'100%','height':300},
 										),
 									)]
 								),
@@ -279,4 +290,4 @@ except Exception as ex:
 	logging.getLogger(__name__).error("Last chance exception:"+str(ex))
 	logging.getLogger(__name__).info("Exit on last-chance exception")
 finally:
-	logging.getLogger(__name__).info("Goodbye")
+	logging.getLogger(__name__).info("Reached finally OK")
