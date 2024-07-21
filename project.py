@@ -10,8 +10,34 @@ from dash.exceptions import PreventUpdate
 import urllib.parse
 import logging
 from logging import handlers # why?
-import settings
+import live_settings as settings
 import os
+import requests
+import smtplib
+from email.message import EmailMessage
+
+# possible return codes for sending message to rockblock device
+rb_errs={
+	10:"Invalid login credentials",
+	11:"No RockBLOCK with this IMEI found on your account",
+	12:"RockBLOCK has no line rental",
+	13:"Your account has insufficient credit",
+	14:"Could not decode hex data",
+	15:"Data too long",
+	16:"No data",
+	99:"System Error",
+	}
+
+# provided in call to /receive endpoint 
+rb_fields = [
+		"imei", # ex:"300234010753370",
+		"momsn", # ex:"12345",
+		"transmit_time", # ex:"12-10-10 10:41:50",
+		"iridium_lattitude", # ex:"52.3867",
+		"iridium_longitude", # ex:"0.2938",
+		"iridium_cep", # ex:"8",
+		"data", # ex:"48656c6c6f20576f726c6420526f636b424c4f434b"
+]
 
 # utility functions
 def StartDataLogging():
@@ -68,6 +94,48 @@ def backup_messages():
 			logging.getLogger(__name__).error('backup_messages: ' + str(ex))
 	return
 
+# this is what should come from Rockblock when a message is sent from the device
+def simulate_rockblock_message():
+	data = {
+		"imei":"300234010753370",
+		"momsn":"12345",
+		"transmit_time":"12-10-10 10:41:50",
+		"iridium_lattitude":"52.3867",
+		"iridium_longitude":"0.2938",
+		"iridium_cep":"8",
+		"data":"48656c6c6f20576f726c6420526f636b424c4f434b"
+	}
+	test_url="http://rockblock.timeswine.org:5000/requests"
+
+	try:
+		result = requests.post(test_url,json=data)
+		if result:
+			logging.getLogger(__name__).info("simulate: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
+		else:
+			logging.getLogger(__name__).error("simulate: No response")
+	except requests.exceptions.RequestException as rex:
+		logging.getLogger(__name__).error("simulate: request exception " + str(rex))
+
+# this notifies email users each time the /receive endpoint is called correctly
+def notify_users(message):
+	try:
+		server = smtplib.SMTP(settings.smtp_server,settings.smtp_server_port)
+		server.starttls()
+		server.login(settings.smtp_account,settings.smtp_password)
+		for dest in settings.smtp_destinations:
+			msg = EmailMessage()
+			msg['Subject']='Notification from Rockblock'
+			msg['From']='coms@mail.timeswine.org'
+			msg['To']=dest
+			msg.set_content(message)
+			res = server.send_message(msg)
+			logging.getLogger(__name__).info("Notify: "+ dest + ": "+ str(res))
+		server.quit()
+
+	except Exception as ex:
+		logging.getLogger(__name__).error("Notify: " + str(ex))
+
+	return
 ########
 # Start of exec
 #######
@@ -276,14 +344,17 @@ try:
 	app.layout=html.Div(children=lo)
 
 	# Endpoints
-	@server.route('/receive', methods=['GET','POST'])
+	@server.route('/receive', methods=['POST'])
 	def receive_message():
-		if 'imei' in request.form:
-			logging.getLogger(__name__).debug("receive imei: " + request.form['imei'])
-		if 'imei' in request.args:
-			logging.getLogger(__name__).debug("receive imei: " + request.args['imei'])
-		logging.getLogger(__name__).debug("receive form: " + str(request.form))
-		logging.getLogger(__name__).debug("receive args: " + str(request.args))
+		try:
+			for field in rb_fields:
+				if field in request.form:
+					logging.getLogger(__name__).debug("receive {0}: {1}".format(field,request.form[field]))
+				else:
+					logging.getLogger(__name__).error("receive {0}: Missing".format(field))
+#		logging.getLogger(__name__).debug("receive form: " + str(request.form))
+		except Exception as ex:
+			logging.getLogger(__name__).error("receive: " + str(ex))
 		return(Response(status=200))
 	
 except Exception as ex:

@@ -39,6 +39,7 @@ See the update_dns.sh file and updatedns.service files in this repo. Copy the up
 
 * Sending messages
 
-The Rockblock device can call the url endpoint http://rockblock.timeswine.org:5000/receive. That updates the message store (a flat file.) 
+The Rockblock device can call the url endpoint http://rockblock.timeswine.org:5000/receive. If the endpoint is called correctly, a notification is sent to subscribers and the message is logged and stored in the message store (a flat file.) 
 
-How to notify someone that a message has been sent? I looked at a number of wasy to do this (including trying to set up Amazon SNS for SMS messages and running an SMTP server on this instance) but the easiest by far is creating a Google gmail account and using the python smtplib. To send texts, most carriers have an email gateway like <number>@txt.att.net (for e.g. AT&T)
+Amazon SES (Simple Email Service) is used to notify subscribers. Note that setting up the CNAME and TXT DNS records is required (the records are provided by Amazon, although only as name/value pairs, and each DNS registrar has different names for the fields in e.g. CNAME records...)
+Also, in SES 'sandbox' mode, emails can only be sent to verified email addresses (so each recipient will have to opt-in at some point.) To send texts, most carriers have an email gateway like <number>@txt.att.net.
