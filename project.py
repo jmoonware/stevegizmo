@@ -5,7 +5,7 @@ from datetime import datetime as dt
 import pytz
 import portalocker
 import flask
-from flask import request, Response
+from flask import request, Response, make_response
 from dash.exceptions import PreventUpdate
 import urllib.parse
 import logging
@@ -29,7 +29,7 @@ rb_errs={
 	}
 
 # provided in call to /receive endpoint 
-rb_fields = [
+rb_receive_params = [
 		"imei", # ex:"300234010753370",
 		"momsn", # ex:"12345",
 		"transmit_time", # ex:"12-10-10 10:41:50",
@@ -37,6 +37,13 @@ rb_fields = [
 		"iridium_longitude", # ex:"0.2938",
 		"iridium_cep", # ex:"8",
 		"data", # ex:"48656c6c6f20576f726c6420526f636b424c4f434b"
+]
+
+rb_send_params = [
+	"imei",
+	"username",
+	"password",
+	"data",
 ]
 
 # utility functions
@@ -51,9 +58,12 @@ def StartDataLogging():
 	logger=logging.getLogger(__name__)
 	logger.critical("Logging Started, level={0}".format(level))
 
-def send_message_url(message):
+def send_message_url(message,url=None):
 	hex_string = message.encode().hex()
-	send_url = [settings.rb_send_url,"?"]
+	if url: # url provided
+		send_url = [url,"?"]
+	else: # use settings
+		send_url = [settings.rb_send_url,"?"]
 	send_url.extend(["imei=",settings.rb_imei,"&"])
 	send_url.extend(["username=",settings.rb_username,"&"])
 	send_url.extend(["password=",settings.rb_password,"&"])
@@ -80,6 +90,7 @@ def get_messages():
 		logging.getLogger(__name__).error("get_messages: "+str(ex))
 	return(lines)
 
+# not tested, needs a separate lock to avoid r/w collisions
 def backup_messages():
 	if os.path.isfile(settings.message_filename):
 		backnum = 0
@@ -95,7 +106,7 @@ def backup_messages():
 	return
 
 # this is what should come from Rockblock when a message is sent from the device
-def simulate_rockblock_message():
+def simulate_receive_from_rb(message="test"):
 	data = {
 		"imei":"300234010753370",
 		"momsn":"12345",
@@ -103,18 +114,31 @@ def simulate_rockblock_message():
 		"iridium_lattitude":"52.3867",
 		"iridium_longitude":"0.2938",
 		"iridium_cep":"8",
-		"data":"48656c6c6f20576f726c6420526f636b424c4f434b"
+		"data":message.encode().hex()
 	}
-	test_url="http://rockblock.timeswine.org:5000/requests"
+	test_url="http://rockblock.timeswine.org:5000/receive"
 
 	try:
-		result = requests.post(test_url,json=data)
+		result = requests.post(test_url,data=data)
 		if result:
 			logging.getLogger(__name__).info("simulate: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
 		else:
 			logging.getLogger(__name__).error("simulate: No response")
 	except requests.exceptions.RequestException as rex:
 		logging.getLogger(__name__).error("simulate: request exception " + str(rex))
+
+# this posts to an endpoint here to simulate sending to the Rockblock
+def simulate_send_to_rb(message):
+	test_url = send_message_url(message,settings.rb_test_send_url)
+	try:
+		result = requests.post(test_url)
+		if result:
+			logging.getLogger(__name__).info("simulate_send: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
+		else:
+			logging.getLogger(__name__).error("simulate_send: No response")
+	except requests.exceptions.RequestException as rex:
+		logging.getLogger(__name__).error("simulate_send: request exception " + str(rex))
+	return
 
 # this notifies email users each time the /receive endpoint is called correctly
 def notify_users(message):
@@ -136,6 +160,7 @@ def notify_users(message):
 		logging.getLogger(__name__).error("Notify: " + str(ex))
 
 	return
+
 ########
 # Start of exec
 #######
@@ -162,6 +187,11 @@ try:
 			logging.getLogger(__name__).info("send: " + message)
 			logging.getLogger(__name__).debug("send: " + send_message_url(message))
 			persist_message("website",message)
+			try:
+				ret = requests.post(send_message_url(message))
+				logging.getLogger(__name__).info("send: response {0}, {1}".format(str(ret),ret.text))
+			except requests.exceptions.RequestException as rex:
+				logging.getLogger(__name__).error("send: {0}".format(str(rex)))
 		return
 
 	# polling loop to update local message cache
@@ -347,7 +377,8 @@ try:
 	@server.route('/receive', methods=['POST'])
 	def receive_message():
 		try:
-			for field in rb_fields:
+			logging.getLogger(__name__).debug("receive {0} {1} {2}".format(str(request),str(request.form),str(request.args)))
+			for field in rb_receive_params:
 				if field in request.form:
 					logging.getLogger(__name__).debug("receive {0}: {1}".format(field,request.form[field]))
 				else:
@@ -356,7 +387,23 @@ try:
 		except Exception as ex:
 			logging.getLogger(__name__).error("receive: " + str(ex))
 		return(Response(status=200))
-	
+
+	# call this route instead of the live Rockblock url to test logic
+	@server.route('/test_url',methods=['POST'])
+	def test_send():
+		ret = make_response("OK, 12345",200)
+		ret.mimetype = "text/plain"
+		# log the fields provided
+		try:
+			for field in rb_send_params:
+				if field in request.form:
+					logging.getLogger(__name__).debug("test_send {0}: {1}".format(field,request.form[field]))
+				else:
+					logging.getLogger(__name__).error("test_send {0}: Missing".format(field))
+		except Exception as ex:
+			logging.getLogger(__name__).error("test_send: " + str(ex))
+		return(ret)
+
 except Exception as ex:
 	logging.getLogger(__name__).error("Last chance exception:"+str(ex))
 	logging.getLogger(__name__).info("Exit on last-chance exception")
