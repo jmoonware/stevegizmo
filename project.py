@@ -244,7 +244,7 @@ try:
 					html.Td(y[2]),
 					html.Td(y[3])]) for x,y in zip(msg_fmt_dt,msg_elements)] 
 			except IndexError as ie:
-				logging.getLogger(__name__).error("on_interval: {1}".format(str(ie)))
+				logging.getLogger(__name__).error("on_interval: {0}".format(str(ie)))
 				backup_messages() # corrupt message somewhere...
 		else: # nothing to do
 			raise PreventUpdate
