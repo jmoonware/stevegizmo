@@ -16,17 +16,8 @@ import requests
 import smtplib
 from email.message import EmailMessage
 
-# possible return codes for sending message to rockblock device
-rb_errs={
-	10:"Invalid login credentials",
-	11:"No RockBLOCK with this IMEI found on your account",
-	12:"RockBLOCK has no line rental",
-	13:"Your account has insufficient credit",
-	14:"Could not decode hex data",
-	15:"Data too long",
-	16:"No data",
-	99:"System Error",
-	}
+# replaces \n in message store file (where \n is a record separator)
+cr_placeholder = "$===$"
 
 # provided in call to /receive endpoint 
 rb_receive_params = [
@@ -50,7 +41,7 @@ rb_send_params = [
 def StartDataLogging():
 	logFormatString='\t'.join(['%(asctime)s','%(levelname)s','%(message)s'])
 	level=logging.DEBUG
-	maxbytes=10000000
+	maxbytes=1000000
 	rfh=handlers.RotatingFileHandler(filename=settings.log_filename,maxBytes=maxbytes,backupCount=10)
 	sh=logging.StreamHandler()
 	logging.basicConfig(format=logFormatString,handlers=[sh,rfh],level=level)
@@ -75,8 +66,11 @@ def persist_message(message_from, status, message):
 		try:
 			# ISO, timezone-aware UTC time
 			isonow = dt.utcnow().astimezone(pytz.UTC).isoformat()
+			# message can't have carriage returns or tabs for storage in file
+			# just remove tabs, and fake cr's with a placeholder
+			clean_msg = message.replace('\t','').replace('\n',cr_placeholder)
 			with portalocker.Lock(settings.message_filename,'a',timeout=5) as mf:
-				mf.write("{0}\t{1}\t{2}\t{3}\n".format(isonow,message_from,status,message.replace('\t',' ').split('\n')[0]))
+				mf.write("{0}\t{1}\t{2}\t{3}\n".format(isonow,message_from,status,clean_msg))
 		except Exception as ex:
 			logging.getLogger(__name__).error("persist: "+str(ex))
 	return
@@ -120,26 +114,25 @@ def simulate_receive_from_rb(message="test"):
 
 	try:
 		result = requests.post(test_url,data=data)
-		logging.getLogger(__name__).info("simulate: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
+		logging.getLogger(__name__).info("simulate receive: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
 	except requests.exceptions.RequestException as rex:
-		logging.getLogger(__name__).error("simulate: request exception " + str(rex))
+		logging.getLogger(__name__).error("simulate receive: request exception " + str(rex))
 
 # turns received dict of values into a text message 
 # this is the format that will go to users
 def build_message(msg_dict):
 	lines=[]
-	lines.append("\n")
+#	lines.append("\n")
 	try:
-		lines.append(bytearray.fromhex(msg_dict['data']).decode())
+		lines.append(bytearray.fromhex(msg_dict['data']).decode()+"\n")
 	except ValueError as ve:
 		logging.getLogger(__name__).error("build_message: Couldn't decode {0}".format(msg_dict['data']))
-		lines.append(msg_dict['data'])
-	lines.append("\n")
+		lines.append(msg_dict['data']+"\n")
 	lines.append("imei: " + msg_dict['imei'])
 	lines.append("momsn: " + msg_dict['momsn'])
+	lines.append("transmit time: " + msg_dict['transmit_time'])
 	lines.append("Iridium Lat, Long: ({0},{1})".format(msg_dict['iridium_lattitude'],msg_dict['iridium_longitude']))
-	lines.append("Iridium accuracy (km): "+msg_dict['iridium_cep'])
-	lines.append("\n")
+	lines.append("Iridium accuracy (km): "+msg_dict['iridium_cep']+"\n")
 	lines.append('Click here to reply: ' + settings.reply_url)
 	return('\n'.join(lines))
 
@@ -237,12 +230,35 @@ try:
 				msg_elements = [x.split('\t') for x in msg_lines]
 				msg_fmt_dt = [(x[0].split('T')[0],x[0].split('T')[-1].split('.')[0]) for x in msg_elements]
 				cache_messages = '\n'.join(msg_lines)
+				status_colors=[]
+				clean_msgs = []
+				for els in msg_elements:
+					if els[2].upper()=="OK":
+						status_colors.append("success")
+					else:
+						status_colors.append("warning")
+					msg_lines=els[3].split(cr_placeholder)
+					alert_lines=[]
+					for l in msg_lines:
+						if not settings.reply_url in l:
+							alert_lines.append(l)
+							alert_lines.append(html.Br())
+					clean_msgs.append(alert_lines[:-1])
 				out_rows = [
-					html.Tr([html.Td(x[0]),
-					html.Td(x[1]),
-					html.Td(y[1]),
-					html.Td(y[2]),
-					html.Td(y[3])]) for x,y in zip(msg_fmt_dt,msg_elements)] 
+					dbc.Card([
+						dbc.CardBody([
+							dbc.Badge(y[1],color="light",text_color="dark"),
+							dbc.Alert(m,color="primary",style={"margin-bottom":0}),
+							dbc.Badge(x[0]+" "+x[1],color="light",text_color="dark"),
+							dbc.Badge(y[2],color=c),
+							]),
+						]) 
+						for c,m,x,y in zip(status_colors,clean_msgs,msg_fmt_dt,msg_elements)] 
+#					html.Tr([html.Td(x[0]),
+#					html.Td(x[1]),
+#					html.Td(y[1]),
+#					html.Td(y[2]),
+#					html.Td(y[3])]) 
 			except IndexError as ie:
 				logging.getLogger(__name__).error("on_interval: {0}".format(str(ie)))
 				backup_messages() # corrupt message somewhere...
@@ -280,15 +296,15 @@ try:
 	        dbc.Card([
 				dbc.CardBody([
 					html.H3("Messages",className="text-primary"),
-					dbc.Table([
-						html.Thead(html.Tr([html.Th("UTC Date",style={'width':'10%'}), html.Th("UTC Time",style={'width':'10%'}),html.Th("From",style={'width':'10%'}),html.Th("Status",style={'width':'5%'}),html.Th("Message"), ])),
-						html.Tbody([
+#					dbc.Table([
+#						html.Thead(html.Tr([html.Th("UTC Date",style={'width':'10%'}), html.Th("UTC Time",style={'width':'10%'}),html.Th("From",style={'width':'10%'}),html.Th("Status",style={'width':'5%'}),html.Th("Message"), ])),
+#						html.Tbody([
 #						html.Tr([
 #							html.Td(html.H4("...",id="last-sent")),
 #							]),
-						],id="message-rows"),
-					]),
-				]),
+#						],id="message-rows"),
+#					]),
+				],id="message-rows"),
 			]),
 			html.Div(' ',style={'margin-bottom': 25}),
 	        dbc.Card([
@@ -406,11 +422,11 @@ try:
 					msg_dict[field]=request.form[field]
 					logging.getLogger(__name__).debug("receive {0}: {1}".format(field,request.form[field]))
 				else:
-					msg_dict[field]=""
+					msg_dict[field]=" "
 					logging.getLogger(__name__).error("receive {0}: Missing".format(field))
 			msg_text = build_message(msg_dict)
 			persist_message(msg_dict['imei'],'OK',msg_text)
-			persist_message('mailer',notify_users(msg_text),'User notification')
+			persist_message('mailer',notify_users(msg_text),'Subscribed users message send')
 		except Exception as ex:
 			logging.getLogger(__name__).error("receive: " + str(ex))
 		return(Response(status=200))
@@ -423,8 +439,8 @@ try:
 		# log the fields provided
 		try:
 			for field in rb_send_params:
-				if field in request.form:
-					logging.getLogger(__name__).debug("test_send {0}: {1}".format(field,request.form[field]))
+				if field in request.args:
+					logging.getLogger(__name__).debug("test_send {0}: {1}".format(field,request.args[field]))
 				else:
 					logging.getLogger(__name__).error("test_send {0}: Missing".format(field))
 		except Exception as ex:
