@@ -70,13 +70,13 @@ def send_message_url(message,url=None):
 	send_url.extend(["data=",urllib.parse.quote(hex_string)])
 	return("".join(send_url))
 
-def persist_message(message_from, message):
+def persist_message(message_from, status, message):
 	if message != None:
 		try:
 			# ISO, timezone-aware UTC time
 			isonow = dt.utcnow().astimezone(pytz.UTC).isoformat()
 			with portalocker.Lock(settings.message_filename,'a',timeout=5) as mf:
-				mf.write("{0}\t{1}\t{2}\n".format(isonow,message_from,message.replace('\t',' ')))
+				mf.write("{0}\t{1}\t{2}\t{3}\n".format(isonow,message_from,status,message.replace('\t',' ').split('\n')[0]))
 		except Exception as ex:
 			logging.getLogger(__name__).error("persist: "+str(ex))
 	return
@@ -120,22 +120,37 @@ def simulate_receive_from_rb(message="test"):
 
 	try:
 		result = requests.post(test_url,data=data)
-		if result:
-			logging.getLogger(__name__).info("simulate: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
-		else:
-			logging.getLogger(__name__).error("simulate: No response")
+		logging.getLogger(__name__).info("simulate: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
 	except requests.exceptions.RequestException as rex:
 		logging.getLogger(__name__).error("simulate: request exception " + str(rex))
 
-# this posts to an endpoint here to simulate sending to the Rockblock
+# turns received dict of values into a text message 
+# this is the format that will go to users
+def build_message(msg_dict):
+	lines=[]
+	lines.append("\n")
+	try:
+		lines.append(bytearray.fromhex(msg_dict['data']).decode())
+	except ValueError as ve:
+		logging.getLogger(__name__).error("build_message: Couldn't decode {0}".format(msg_dict['data']))
+		lines.append(msg_dict['data'])
+	lines.append("\n")
+	lines.append("imei: " + msg_dict['imei'])
+	lines.append("momsn: " + msg_dict['momsn'])
+	lines.append("Iridium Lat, Long: ({0},{1})".format(msg_dict['iridium_lattitude'],msg_dict['iridium_longitude']))
+	lines.append("Iridium accuracy (km): "+msg_dict['iridium_cep'])
+	lines.append("\n")
+	lines.append('Click here to reply: ' + settings.reply_url)
+	return('\n'.join(lines))
+
+# this posts to an endpoint on the web server in order 
+# to simulate sending to the Rockblock
+# used in testing only
 def simulate_send_to_rb(message):
 	test_url = send_message_url(message,settings.rb_test_send_url)
 	try:
 		result = requests.post(test_url)
-		if result:
-			logging.getLogger(__name__).info("simulate_send: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
-		else:
-			logging.getLogger(__name__).error("simulate_send: No response")
+		logging.getLogger(__name__).info("simulate_send: Response Code {0}, Response is: {1} ".format(str(result.status_code),result.text))
 	except requests.exceptions.RequestException as rex:
 		logging.getLogger(__name__).error("simulate_send: request exception " + str(rex))
 	return
@@ -143,23 +158,27 @@ def simulate_send_to_rb(message):
 # this notifies email users each time the /receive endpoint is called correctly
 def notify_users(message):
 	try:
+		status='OK'
 		server = smtplib.SMTP(settings.smtp_server,settings.smtp_server_port)
 		server.starttls()
 		server.login(settings.smtp_account,settings.smtp_password)
 		for dest in settings.smtp_destinations:
 			msg = EmailMessage()
-			msg['Subject']='Notification from Rockblock'
-			msg['From']='coms@mail.timeswine.org'
+			msg['Subject']=settings.notify_subject
+			msg['From']=settings.notify_from
 			msg['To']=dest
 			msg.set_content(message)
 			res = server.send_message(msg)
 			logging.getLogger(__name__).info("Notify: "+ dest + ": "+ str(res))
+			if res!=None and len(res)>0:
+				status='FAIL SEND'
 		server.quit()
 
 	except Exception as ex:
 		logging.getLogger(__name__).error("Notify: " + str(ex))
+		status='FAIL NOTIFY'
 
-	return
+	return status
 
 ########
 # Start of exec
@@ -186,10 +205,11 @@ try:
 		if "send-button" == ctx.triggered_id:
 			logging.getLogger(__name__).info("send: " + message)
 			logging.getLogger(__name__).debug("send: " + send_message_url(message))
-			persist_message("website",message)
 			try:
 				ret = requests.post(send_message_url(message))
 				logging.getLogger(__name__).info("send: response {0}, {1}".format(str(ret),ret.text))
+				toks=ret.text.split(',')
+				persist_message("website",toks[0].strip(),message)
 			except requests.exceptions.RequestException as rex:
 				logging.getLogger(__name__).error("send: {0}".format(str(rex)))
 		return
@@ -217,7 +237,12 @@ try:
 				msg_elements = [x.split('\t') for x in msg_lines]
 				msg_fmt_dt = [(x[0].split('T')[0],x[0].split('T')[-1].split('.')[0]) for x in msg_elements]
 				cache_messages = '\n'.join(msg_lines)
-				out_rows = [html.Tr([html.Td(x[0]),html.Td(x[1]),html.Td(y[1]),html.Td(y[2])]) for x,y in zip(msg_fmt_dt,msg_elements)] 
+				out_rows = [
+					html.Tr([html.Td(x[0]),
+					html.Td(x[1]),
+					html.Td(y[1]),
+					html.Td(y[2]),
+					html.Td(y[3])]) for x,y in zip(msg_fmt_dt,msg_elements)] 
 			except IndexError as ie:
 				logging.getLogger(__name__).error("on_interval: {1}".format(str(ie)))
 				backup_messages() # corrupt message somewhere...
@@ -256,7 +281,7 @@ try:
 				dbc.CardBody([
 					html.H3("Messages",className="text-primary"),
 					dbc.Table([
-						html.Thead(html.Tr([html.Th("UTC Date",style={'width':'10%'}), html.Th("UTC Time",style={'width':'10%'}),html.Th("From",style={'width':'10%'}),html.Th("Message"), ])),
+						html.Thead(html.Tr([html.Th("UTC Date",style={'width':'10%'}), html.Th("UTC Time",style={'width':'10%'}),html.Th("From",style={'width':'10%'}),html.Th("Status",style={'width':'5%'}),html.Th("Message"), ])),
 						html.Tbody([
 #						html.Tr([
 #							html.Td(html.H4("...",id="last-sent")),
@@ -353,8 +378,6 @@ try:
 		]) # Row
 	) # append
 
-
-
 	lo.append(
 		dbc.Row(
 			dbc.Col(
@@ -377,18 +400,22 @@ try:
 	@server.route('/receive', methods=['POST'])
 	def receive_message():
 		try:
-			logging.getLogger(__name__).debug("receive {0} {1} {2}".format(str(request),str(request.form),str(request.args)))
+			msg_dict={}
 			for field in rb_receive_params:
 				if field in request.form:
+					msg_dict[field]=request.form[field]
 					logging.getLogger(__name__).debug("receive {0}: {1}".format(field,request.form[field]))
 				else:
+					msg_dict[field]=""
 					logging.getLogger(__name__).error("receive {0}: Missing".format(field))
-#		logging.getLogger(__name__).debug("receive form: " + str(request.form))
+			msg_text = build_message(msg_dict)
+			persist_message(msg_dict['imei'],'OK',msg_text)
+			persist_message('mailer',notify_users(msg_text),'User notification')
 		except Exception as ex:
 			logging.getLogger(__name__).error("receive: " + str(ex))
 		return(Response(status=200))
 
-	# call this route instead of the live Rockblock url to test logic
+	# call this endpoint instead of the live Rockblock url to test logic
 	@server.route('/test_url',methods=['POST'])
 	def test_send():
 		ret = make_response("OK, 12345",200)

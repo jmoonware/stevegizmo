@@ -11,3 +11,6 @@ smtp_server_port=587
 smtp_account="ABCDEF1234"
 smtp_password="abcdef123456"
 smtp_destinations=["smith@smith.com","pork@gmail.com"]
+notify_subject="Message from Rockblock"
+notify_from="noreply@mail.mymail.org"
+reply_url="http://this/website"
