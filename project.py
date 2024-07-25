@@ -197,6 +197,7 @@ try:
 	def on_click(n,message):
 		if "send-button" == ctx.triggered_id:
 			logging.getLogger(__name__).info("send: " + message)
+
 			logging.getLogger(__name__).debug("send: " + send_message_url(message))
 			try:
 				ret = requests.post(send_message_url(message))
@@ -285,7 +286,8 @@ try:
 		if n:
 			with open(settings.log_filename,'r') as f:
 				lines = f.readlines()
-		return ''.join(lines) 
+		# Don't display username/password from log file!
+		return ''.join(lines).replace(settings.rb_username,"XXXX").replace(settings.rb_password,"YYYY")
 
 
 	# Layout
