@@ -15,6 +15,7 @@ import os
 import requests
 import smtplib
 from email.message import EmailMessage
+import boto3
 
 # replaces \n in message store file (where \n is a record separator)
 cr_placeholder = "$===$"
@@ -120,7 +121,7 @@ def simulate_receive_from_rb(message="test"):
 
 # turns received dict of values into a text message 
 # this is the format that will go to users
-def build_message(msg_dict):
+def build_message(msg_dict,sms=False):
 	lines=[]
 #	lines.append("\n")
 	try:
@@ -128,12 +129,17 @@ def build_message(msg_dict):
 	except ValueError as ve:
 		logging.getLogger(__name__).error("build_message: Couldn't decode {0}".format(msg_dict['data']))
 		lines.append(msg_dict['data']+"\n")
-	lines.append("imei: " + msg_dict['imei'])
-	lines.append("momsn: " + msg_dict['momsn'])
-	lines.append("transmit time: " + msg_dict['transmit_time'])
-	lines.append("Iridium Lat, Long: ({0},{1})".format(msg_dict['iridium_lattitude'],msg_dict['iridium_longitude']))
-	lines.append("Iridium accuracy (km): "+msg_dict['iridium_cep']+"\n")
-	lines.append('Click here to reply: ' + settings.reply_url)
+	if not sms: # email, no limit on data
+		lines.append("imei: " + msg_dict['imei'])
+		lines.append("momsn: " + msg_dict['momsn'])
+		lines.append("transmit time: " + msg_dict['transmit_time'])
+		lines.append("Iridium Lat, Long: ({0},{1})".format(msg_dict['iridium_lattitude'],msg_dict['iridium_longitude']))
+		lines.append("Iridium accuracy (km): "+msg_dict['iridium_cep']+"\n")
+		lines.append('Click here to reply: ' + settings.reply_url)
+	else: # shorten
+		lines.append("{0}:({1},{2})".format(msg_dict['transmit_time'],msg_dict['iridium_lattitude'],msg_dict['iridium_longitude']))
+		lines.append('Reply: ' + settings.reply_url)
+		
 	return('\n'.join(lines))
 
 # this posts to an endpoint on the web server in order 
@@ -170,6 +176,25 @@ def notify_users(message):
 	except Exception as ex:
 		logging.getLogger(__name__).error("Notify: " + str(ex))
 		status='FAIL NOTIFY'
+
+	return status
+
+# this notifies SMS users each time the /receive endpoint is called correctly
+def notify_sms_users(message):
+	try:
+		status='OK'
+		sns_client =  boto3.client('sns','us-east-1',aws_access_key_id = settings.aws_access_key_id, aws_secret_access_key = settings.aws_secret_access_key)
+		for dest in settings.sms_destinations:
+			res = sns_client.publish(Message=message,PhoneNumber=dest)
+			logging.getLogger(__name__).info("Notify SMS: "+ dest + ": "+ str(res))
+			if res!=None and 'ResponseMetadata' in res and 'HTTPStatusCode' in res['ResponseMetadata']:
+				if res['ResponseMetadata']['HTTPStatusCode']!=200:
+					status='FAIL SMS {0}'.format(res['ResponseMetadata']['HTTPStatusCode'])
+		sns_client.close()
+
+	except Exception as ex:
+		logging.getLogger(__name__).error("Notify SMS: " + str(ex))
+		status='FAIL SMS NOTIFY'
 
 	return status
 
@@ -427,8 +452,10 @@ try:
 					msg_dict[field]=" "
 					logging.getLogger(__name__).error("receive {0}: Missing".format(field))
 			msg_text = build_message(msg_dict)
+			sms_msg_text = build_message(msg_dict,sms=True)
 			persist_message(msg_dict['imei'],'OK',msg_text)
-			persist_message('mailer',notify_users(msg_text),'Subscribed users message send')
+			persist_message('mailer',notify_users(msg_text),'Subscribed email users message send')
+			persist_message('sms',notify_sms_users(sms_msg_text),'Subscribed sms users message send')
 		except Exception as ex:
 			logging.getLogger(__name__).error("receive: " + str(ex))
 		return(Response(status=200))
