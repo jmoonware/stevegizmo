@@ -25,7 +25,7 @@ rb_receive_params = [
 		"imei", # ex:"300234010753370",
 		"momsn", # ex:"12345",
 		"transmit_time", # ex:"12-10-10 10:41:50",
-		"iridium_lattitude", # ex:"52.3867",
+		"iridium_latitude", # ex:"52.3867",
 		"iridium_longitude", # ex:"0.2938",
 		"iridium_cep", # ex:"8",
 		"data", # ex:"48656c6c6f20576f726c6420526f636b424c4f434b"
@@ -106,7 +106,7 @@ def simulate_receive_from_rb(message="test"):
 		"imei":"300234010753370",
 		"momsn":"12345",
 		"transmit_time":"12-10-10 10:41:50",
-		"iridium_lattitude":"52.3867",
+		"iridium_latitude":"52.3867",
 		"iridium_longitude":"0.2938",
 		"iridium_cep":"8",
 		"data":message.encode().hex()
@@ -133,11 +133,11 @@ def build_message(msg_dict,sms=False):
 		lines.append("imei: " + msg_dict['imei'])
 		lines.append("momsn: " + msg_dict['momsn'])
 		lines.append("transmit time: " + msg_dict['transmit_time'])
-		lines.append("Iridium Lat, Long: ({0},{1})".format(msg_dict['iridium_lattitude'],msg_dict['iridium_longitude']))
+		lines.append("Iridium Lat, Long: ({0},{1})".format(msg_dict['iridium_latitude'],msg_dict['iridium_longitude']))
 		lines.append("Iridium accuracy (km): "+msg_dict['iridium_cep']+"\n")
 		lines.append('Click here to reply: ' + settings.reply_url)
 	else: # shorten
-		lines.append("{0}:({1},{2})".format(msg_dict['transmit_time'],msg_dict['iridium_lattitude'],msg_dict['iridium_longitude']))
+		lines.append("{0}:({1},{2})".format(msg_dict['transmit_time'],msg_dict['iridium_latitude'],msg_dict['iridium_longitude']))
 		lines.append('Reply: ' + settings.reply_url)
 		
 	return('\n'.join(lines))
