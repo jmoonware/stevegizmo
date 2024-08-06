@@ -83,7 +83,7 @@ def get_messages():
 			lines=mf.readlines()
 	except Exception as ex:
 		logging.getLogger(__name__).error("get_messages: "+str(ex))
-	return(lines)
+	return(lines[::-1])
 
 # not tested, needs a separate lock to avoid r/w collisions
 def backup_messages():
@@ -322,20 +322,6 @@ try:
 		dbc.Row([
 	        dbc.Card([
 				dbc.CardBody([
-					html.H3("Messages",className="text-primary"),
-#					dbc.Table([
-#						html.Thead(html.Tr([html.Th("UTC Date",style={'width':'10%'}), html.Th("UTC Time",style={'width':'10%'}),html.Th("From",style={'width':'10%'}),html.Th("Status",style={'width':'5%'}),html.Th("Message"), ])),
-#						html.Tbody([
-#						html.Tr([
-#							html.Td(html.H4("...",id="last-sent")),
-#							]),
-#						],id="message-rows"),
-#					]),
-				],id="message-rows"),
-			]),
-			html.Div(' ',style={'margin-bottom': 25}),
-	        dbc.Card([
-				dbc.CardBody([
 					dbc.Table(html.Tbody([
 						html.Tr([
 							html.Td(dbc.Input(id="message-input",placeholder="Type a message...",size="md",type="text")),
@@ -346,6 +332,20 @@ try:
 						]),
 					),
 				]),
+			]),
+			html.Div(' ',style={'margin-bottom': 25}),
+	        dbc.Card([
+				dbc.CardBody([
+					html.H3("Messages",className="text-primary"),
+#					dbc.Table([
+#						html.Thead(html.Tr([html.Th("UTC Date",style={'width':'10%'}), html.Th("UTC Time",style={'width':'10%'}),html.Th("From",style={'width':'10%'}),html.Th("Status",style={'width':'5%'}),html.Th("Message"), ])),
+#						html.Tbody([
+#						html.Tr([
+#							html.Td(html.H4("...",id="last-sent")),
+#							]),
+#						],id="message-rows"),
+#					]),
+				],id="message-rows"),
 			]),
 		])
 	)
